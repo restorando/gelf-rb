@@ -12,12 +12,11 @@ module GELF
     # +host+ and +port+ are host/ip and port of graylog2-server.
     # +max_size+ is passed to max_chunk_size=.
     # +default_options+ is used in notify!
-    def initialize(host = 'localhost', port = 12201, max_size = 'WAN', default_options = {})
+    def initialize(host = 'localhost', port = 12201, max_size = 'WAN', default_options = {}, config_options = {})
       @enabled = true
       @collect_file_and_line = true
 
       self.level = GELF::DEBUG
-      self.max_chunk_size = max_size
       self.rescue_network_errors = false
 
       self.default_options = default_options
@@ -26,7 +25,16 @@ module GELF
       self.default_options['level'] ||= GELF::UNKNOWN
       self.default_options['facility'] ||= 'gelf-rb'
 
-      @sender = RubyUdpSender.new([[host, port]])
+      @config_options = config_options
+      @config_options['compress'] = config_options.fetch('compress', true)
+
+      @sender = if @config_options['socket_type'] == 'tcp'
+        RubyTcpSender.new([[host, port]])
+      else
+        self.max_chunk_size = max_size
+        RubyUdpSender.new([[host, port]], max_chunk_size)
+      end
+
       self.level_mapping = :logger
     end
 
@@ -56,12 +64,12 @@ module GELF
     # Default (safe) value is 'WAN'.
     def max_chunk_size=(size)
       case size.to_s.downcase
-        when 'wan'
-          @max_chunk_size = 1420
-        when 'lan'
-          @max_chunk_size = 8154
-        else
-          @max_chunk_size = size.to_int
+      when 'wan'
+        @max_chunk_size = 1420
+      when 'lan'
+        @max_chunk_size = 8154
+      else
+        @max_chunk_size = size.to_int
       end
     end
 
@@ -145,7 +153,7 @@ module GELF
       extract_hash(*args)
       @hash['level'] = message_level unless message_level.nil?
       if @hash['level'] >= level
-        @sender.send_datagrams(datagrams_from_hash)
+        @sender.send_data(serialize_hash(@hash))
       end
     end
 
@@ -207,32 +215,20 @@ module GELF
       end
     end
 
-    def datagrams_from_hash
-      data = serialize_hash
-      datagrams = []
+    def serialize_hash(hash)
+      raise ArgumentError.new("Hash is empty.") if hash.nil? || hash.empty?
 
-      # Maximum total size is 8192 byte for UDP datagram. Split to chunks if bigger. (GELF v1.0 supports chunking)
-      if data.count > @max_chunk_size
-        id = GELF::Notifier.last_chunk_id += 1
-        msg_id = Digest::MD5.digest("#{Time.now.to_f}-#{id}")[0, 8]
-        num, count = 0, (data.count.to_f / @max_chunk_size).ceil
-        data.each_slice(@max_chunk_size) do |slice|
-          datagrams << "\x1e\x0f" + msg_id + [num, count, *slice].pack('C*')
-          num += 1
-        end
+      hash['level'] = @level_mapping[hash['level']]
+
+      if compress?
+        Zlib::Deflate.deflate(hash.to_json)
       else
-        datagrams << data.to_a.pack('C*')
+        hash.to_json
       end
-
-      datagrams
     end
 
-    def serialize_hash
-      raise ArgumentError.new("Hash is empty.") if @hash.nil? || @hash.empty?
-
-      @hash['level'] = @level_mapping[@hash['level']]
-
-      Zlib::Deflate.deflate(@hash.to_json).bytes
+    def compress?
+      @config_options['compress']
     end
 
     def self.stringify_keys(hash)

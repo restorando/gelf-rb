@@ -22,7 +22,7 @@ class TestNotifier < Test::Unit::TestCase
   context "with notifier with mocked sender" do
     setup do
       Socket.stubs(:gethostname).returns('stubbed_hostname')
-      @notifier = GELF::Notifier.new('host', 12345)
+      @notifier = GELF::Notifier.new('host', 12345, "WAN", {}, "compress" => false)
       @sender = mock
       @notifier.instance_variable_set('@sender', @sender)
     end
@@ -129,10 +129,9 @@ class TestNotifier < Test::Unit::TestCase
     context "serialize_hash" do
       setup do
         @notifier.level_mapping = :direct
-        @notifier.instance_variable_set('@hash', { 'level' => GELF::WARN, 'field' => 'value' })
-        @data = @notifier.__send__(:serialize_hash)
-        assert @data.respond_to?(:each)  # Enumerable::Enumerator in 1.8, ::Enumerator in 1.9, so...
-        @deserialized_hash = JSON.parse(Zlib::Inflate.inflate(@data.to_a.pack('C*')))
+        @data = @notifier.__send__(:serialize_hash, { 'level' => GELF::WARN, 'field' => 'value' })
+        assert @data.is_a?(String)
+        @deserialized_hash = JSON(@data)
         assert_instance_of Hash, @deserialized_hash
       end
 
@@ -143,64 +142,64 @@ class TestNotifier < Test::Unit::TestCase
       end
     end
 
-    context "datagrams_from_hash" do
-      should "not split short data" do
-        @notifier.instance_variable_set('@hash', { 'version' => '1.0', 'short_message' => 'message' })
-        datagrams = @notifier.__send__(:datagrams_from_hash)
-        assert_equal 1, datagrams.count
-        assert_instance_of String, datagrams[0]
+    # context "datagrams_from_hash" do
+    #   should "not split short data" do
+    #     @notifier.instance_variable_set('@hash', { 'version' => '1.0', 'short_message' => 'message' })
+    #     datagrams = @notifier.__send__(:datagrams_from_hash)
+    #     assert_equal 1, datagrams.count
+    #     assert_instance_of String, datagrams[0]
 
-        asserted = "\x78\x9c"
-        if RUBY_VERSION[0,1].to_i >= 2
-          puts "I'm a Ruby > 2.0.0. Enforcing ASCII-8BIT. (#{RUBY_VERSION}/#{RUBY_VERSION[0,1].to_i})"
-          # lol well yeah, Rubby. 
-          # http://stackoverflow.com/questions/15843684/binary-string-literals-in-ruby-2-0
-          asserted = asserted.b
-        end
+    #     asserted = "\x78\x9c"
+    #     if RUBY_VERSION[0,1].to_i >= 2
+    #       puts "I'm a Ruby > 2.0.0. Enforcing ASCII-8BIT. (#{RUBY_VERSION}/#{RUBY_VERSION[0,1].to_i})"
+    #       # lol well yeah, Rubby.
+    #       # http://stackoverflow.com/questions/15843684/binary-string-literals-in-ruby-2-0
+    #       asserted = asserted.b
+    #     end
 
-        assert_equal asserted, datagrams[0][0..1] # zlib header
-      end
+    #     assert_equal asserted, datagrams[0][0..1] # zlib header
+    #   end
 
-      should "split long data" do
-        srand(1) # for stable tests
-        hash = { 'version' => '1.0', 'short_message' => 'message' }
-        hash.merge!('something' => (0..3000).map { RANDOM_DATA[rand(RANDOM_DATA.count)] }.join) # or it will be compressed too good
-        @notifier.instance_variable_set('@hash', hash)
-        datagrams = @notifier.__send__(:datagrams_from_hash)
-        assert_equal 2, datagrams.count
-        datagrams.each_index do |i|
-          datagram = datagrams[i]
-          assert_instance_of String, datagram
-          assert datagram[0..1] == "\x1e\x0f" # chunked GELF magic number
-          # datagram[2..9] is a message id
-          assert_equal i, datagram[10].ord
-          assert_equal datagrams.count, datagram[11].ord
-        end
-      end
+    #   should "split long data" do
+    #     srand(1) # for stable tests
+    #     hash = { 'version' => '1.0', 'short_message' => 'message' }
+    #     hash.merge!('something' => (0..3000).map { RANDOM_DATA[rand(RANDOM_DATA.count)] }.join) # or it will be compressed too good
+    #     @notifier.instance_variable_set('@hash', hash)
+    #     datagrams = @notifier.__send__(:datagrams_from_hash)
+    #     assert_equal 2, datagrams.count
+    #     datagrams.each_index do |i|
+    #       datagram = datagrams[i]
+    #       assert_instance_of String, datagram
+    #       assert datagram[0..1] == "\x1e\x0f" # chunked GELF magic number
+    #       # datagram[2..9] is a message id
+    #       assert_equal i, datagram[10].ord
+    #       assert_equal datagrams.count, datagram[11].ord
+    #     end
+    #   end
 
-      should "split long data when subclassed" do
-        class MyNotifier < GELF::Notifier; end
+    #   should "split long data when subclassed" do
+    #     class MyNotifier < GELF::Notifier; end
 
-        @notifier = MyNotifier.new('host', 1234)
-        @sender = mock
-        @notifier.instance_variable_set('@sender', @sender)
+    #     @notifier = MyNotifier.new('host', 1234)
+    #     @sender = mock
+    #     @notifier.instance_variable_set('@sender', @sender)
 
-        srand(1) # for stable tests
-        hash = { 'version' => '1.0', 'short_message' => 'message' }
-        hash.merge!('something' => (0..3000).map { RANDOM_DATA[rand(RANDOM_DATA.count)] }.join) # or it will be compressed too good
-        @notifier.instance_variable_set('@hash', hash)
-        datagrams = @notifier.__send__(:datagrams_from_hash)
-        assert_equal 2, datagrams.count
-        datagrams.each_index do |i|
-          datagram = datagrams[i]
-          assert_instance_of String, datagram
-          assert datagram[0..1] == "\x1e\x0f" # chunked GELF magic number
-          # datagram[2..9] is a message id
-          assert_equal i, datagram[10].ord
-          assert_equal datagrams.count, datagram[11].ord
-        end
-      end
-    end
+    #     srand(1) # for stable tests
+    #     hash = { 'version' => '1.0', 'short_message' => 'message' }
+    #     hash.merge!('something' => (0..3000).map { RANDOM_DATA[rand(RANDOM_DATA.count)] }.join) # or it will be compressed too good
+    #     @notifier.instance_variable_set('@hash', hash)
+    #     datagrams = @notifier.__send__(:datagrams_from_hash)
+    #     assert_equal 2, datagrams.count
+    #     datagrams.each_index do |i|
+    #       datagram = datagrams[i]
+    #       assert_instance_of String, datagram
+    #       assert datagram[0..1] == "\x1e\x0f" # chunked GELF magic number
+    #       # datagram[2..9] is a message id
+    #       assert_equal i, datagram[10].ord
+    #       assert_equal datagrams.count, datagram[11].ord
+    #     end
+    #   end
+    # end
 
     context "level threshold" do
       setup do
@@ -216,12 +215,12 @@ class TestNotifier < Test::Unit::TestCase
       end
 
       should "not send notifications with level below threshold" do
-        @sender.expects(:send_datagrams).never
+        @sender.expects(:send_data).never
         @notifier.notify!(@hash.merge('level' => GELF::DEBUG))
       end
 
       should "not notifications with level equal or above threshold" do
-        @sender.expects(:send_datagrams).once
+        @sender.expects(:send_data).once
         @notifier.notify!(@hash.merge('level' => GELF::WARN))
       end
     end
@@ -250,15 +249,15 @@ class TestNotifier < Test::Unit::TestCase
         end
 
         should "send datagrams" do
-          @sender.expects(:send_datagrams)
+          @sender.expects(:send_data)
           @notifier.notify!({ 'version' => '1.0', 'short_message' => 'message' })
         end
       end
     end
 
     should "pass valid data to sender" do
-      @sender.expects(:send_datagrams).with do |datagrams|
-        datagrams.is_a?(Array) && datagrams[0].is_a?(String)
+      @sender.expects(:send_data).with do |data|
+        JSON(data)['short_message'] == "message"
       end
       @notifier.notify!({ 'version' => '1.0', 'short_message' => 'message' })
     end

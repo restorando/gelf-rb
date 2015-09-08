@@ -53,12 +53,12 @@ module GELF
   class RubyTcpSender
     attr_accessor :addresses
 
-    def initialize(addresses, data_delimiter = "\0")
+    def initialize(addresses, data_delimiter = "\0", timeout = 0.1)
       @addresses = addresses
       @i = 0
       @data_delimiter = data_delimiter
       @sockets = Hash.new do |sockets, index|
-        sockets[index] = TCPSocket.new(*@addresses[index])
+        sockets[index] = open_tcp_socket(*@addresses[index], timeout)
       end
     end
 
@@ -74,6 +74,21 @@ module GELF
     end
 
     private
+
+    def open_tcp_socket(host, port, timeout)
+      addr = Socket.getaddrinfo(host, nil)
+      sock = Socket.new(Socket.const_get(addr[0][0]), Socket::SOCK_STREAM, 0)
+
+      if timeout
+        secs = Integer(timeout)
+        usecs = Integer((timeout - secs) * 1_000_000)
+        optval = [secs, usecs].pack("l_2")
+        sock.setsockopt Socket::SOL_SOCKET, Socket::SO_RCVTIMEO, optval
+        sock.setsockopt Socket::SOL_SOCKET, Socket::SO_SNDTIMEO, optval
+      end
+      sock.connect(Socket.pack_sockaddr_in(port, addr[0][3]))
+      sock
+    end
 
     def find_open_socket(&block)
       (1..@addresses.size).find do

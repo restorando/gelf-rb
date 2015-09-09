@@ -64,7 +64,7 @@ module GELF
 
     def send_data(data)
       find_open_socket do |socket|
-        socket.send data + @data_delimiter, 0
+        socket.sendmsg_nonblock data + @data_delimiter, 0
       end or $stderr.puts("Couldnt use any socket successfully, data was descarded")
     end
 
@@ -101,7 +101,7 @@ module GELF
       yield @sockets[index]
       true
 
-    rescue Errno::ECONNREFUSED, Errno::EPIPE
+    rescue Errno::ECONNREFUSED, Errno::EPIPE, IO::EAGAINWaitWritable
       @sockets.delete(index)
       false
     end

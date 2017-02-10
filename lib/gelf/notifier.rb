@@ -157,7 +157,7 @@ module GELF
       hash = extract_hash(*args)
       hash['level'] = message_level unless message_level.nil?
       if hash['level'] >= level
-        if default_options['protocol'] == GELF::Protocol::TCP || !compress?
+        if (default_options['protocol'] == GELF::Protocol::TCP) || !compress?
           validate_hash(hash)
           @sender.send(hash.to_json + "\0")
         else

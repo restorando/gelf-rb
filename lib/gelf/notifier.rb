@@ -16,7 +16,7 @@ module GELF
     # +host+ and +port+ are host/ip and port of graylog2-server.
     # +max_size+ is passed to max_chunk_size=.
     # +default_options+ is used in notify!
-    def initialize(host = 'localhost', port = 12201, max_size = 'WAN', default_options = {})
+    def initialize(host = 'localhost', port = 12201, max_size = 'WAN', default_options = {}, config_options = {})
       @enabled = true
       @collect_file_and_line = true
       @random = Random.new
@@ -31,6 +31,8 @@ module GELF
       self.default_options['level'] ||= GELF::UNKNOWN
       self.default_options['facility'] ||= 'gelf-rb'
       self.default_options['protocol'] ||= GELF::Protocol::UDP
+      @config_options = config_options
+      @config_options['compress'] = config_options.fetch('compress', true)
 
       self.level_mapping = :logger
       @sender = create_sender(host, port)
@@ -155,7 +157,7 @@ module GELF
       hash = extract_hash(*args)
       hash['level'] = message_level unless message_level.nil?
       if hash['level'] >= level
-        if default_options['protocol'] == GELF::Protocol::TCP
+        if default_options['protocol'] == GELF::Protocol::TCP || !compress?
           validate_hash(hash)
           @sender.send(hash.to_json + "\0")
         else
@@ -265,6 +267,10 @@ module GELF
         hash[key_s] = value
       end
       hash
+    end
+
+    def compress?
+      @config_options['compress']
     end
   end
 end
